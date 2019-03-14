@@ -84,3 +84,19 @@ func (s *FakeStore) ReleaseByID(id string) error {
 func (s *FakeStore) SetIPMap(m map[string]string) {
 	s.ipMap = m
 }
+
+func (s *FakeStore) ReleaseByPodName(podName string) error {
+	return nil
+}
+
+func (s *FakeStore) HasReservedIP(podName string) (bool, net.IP) {
+	ip := net.IP{}
+	if podName == "" {
+		return false, ip
+	}
+	return false, ip
+}
+
+func (s *FakeStore) ReservePodInfo(id string, ip net.IP, podName string, podIsExist bool) (bool, error) {
+	return true, nil
+}

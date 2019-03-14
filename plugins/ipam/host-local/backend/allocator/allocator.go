@@ -40,10 +40,58 @@ func NewIPAllocator(s *RangeSet, store backend.Store, id int) *IPAllocator {
 	}
 }
 
-// Get alocates an IP
-func (a *IPAllocator) Get(id string, requestedIP net.IP) (*current.IPConfig, error) {
+// GetByPodNsAndName allocates an IP or used reserved IP for specified pod
+func (a *IPAllocator) GetByPodNsAndName(id string, requestedIP net.IP, podNs, podName string) (*current.IPConfig, error) {
 	a.store.Lock()
 	defer a.store.Unlock()
+	if len(podName) != 0 {
+		podIPIsExist, knownIP := a.store.HasReservedIP(podNs, podName)
+
+		if podIPIsExist {
+			// podName file is exist, update ip file with new container id.
+			_, err := a.store.ReservePodInfo(id, knownIP, podNs, podName, podIPIsExist)
+			if err != nil {
+				return nil, err
+			}
+
+			reservedIP, gw := a.GetGWofKnowIP(knownIP)
+			if reservedIP == nil {
+				return nil, fmt.Errorf("no IP addresses available in range set: %s", a.rangeset.String())
+			}
+			version := "4"
+			if reservedIP.IP.To4() == nil {
+				version = "6"
+			}
+
+			return &current.IPConfig{
+				Version: version,
+				Address: *reservedIP,
+				Gateway: gw,
+			}, nil
+		} else {
+			// reserve ip for new pod
+			ipCfg, err := a.Get(id, requestedIP)
+			if err != nil {
+				return ipCfg, err
+			}
+
+			if ipCfg != nil {
+				_, err := a.store.ReservePodInfo(id, ipCfg.Address.IP, podNs, podName, podIPIsExist)
+				if err != nil {
+					return ipCfg, err
+				}
+			}
+			return ipCfg, nil
+		}
+	}
+
+	return a.Get(id, requestedIP)
+}
+
+// Get alocates an IP
+func (a *IPAllocator) Get(id string, requestedIP net.IP) (*current.IPConfig, error) {
+	//a.store.Lock()
+	//defer a.store.Unlock()
 
 	var reservedIP *net.IPNet
 	var gw net.IP
@@ -115,6 +163,18 @@ func (a *IPAllocator) Release(id string) error {
 	defer a.store.Unlock()
 
 	return a.store.ReleaseByID(id)
+}
+
+// GetGWofKnowIP returns the known IP, its mask, and its gateway
+func (a *IPAllocator) GetGWofKnowIP(ip net.IP) (*net.IPNet, net.IP) {
+	rg := Range{}
+	for i, r := range *a.rangeset {
+		if r.Contains(ip) {
+			rg = (*a.rangeset)[i]
+			break
+		}
+	}
+	return &net.IPNet{IP: ip, Mask: rg.Subnet.Mask}, rg.Gateway
 }
 
 type RangeIter struct {
